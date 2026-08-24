@@ -1,0 +1,222 @@
+// Lake Naivasha center (approx)
+var naivasha = ee.Geometry.Point([36.432, -0.716]);
+
+// AOI: buffer 20 km (edit as needed)
+var aoi = naivasha.buffer(20000).bounds();
+
+Map.centerObject(aoi, 11);
+Map.addLayer(aoi, {color: 'yellow'}, 'AOI',false);
+
+//sentinel sar collection
+
+function getS1Water(year){
+  var start = ee.Date.fromYMD(year,10,1);
+  var end = ee.Date.fromYMD(year,10,31);
+  
+  
+  var s1 = ee.ImageCollection('COPERNICUS/S1_GRD')
+   .filterBounds(aoi)
+   .filterDate(start,end)
+   .filter(ee.Filter.eq('instrumentMode','IW'))
+   .filter(ee.Filter.listContains('transmitterReceiverPolarisation','VV'))
+   .select('VV');
+  var median = s1.median().clip(aoi);
+  var water= s1.median().lt(-20).rename('water').selfMask();
+  return water;
+  
+}
+
+var s1 = ee.ImageCollection('COPERNICUS/S1_GRD')
+   .filterBounds(aoi)
+   .filterDate('2019-01-01','2020-12-31')
+   .filter(ee.Filter.eq('instrumentMode','IW'))
+   .filter(ee.Filter.listContains('transmitterReceiverPolarisation','VV'))
+   .filter(ee.Filter.eq('orbitProperties_pass','DESCENDING'))
+   .select('VV');
+
+var s2 = ee.ImageCollection('COPERNICUS/S1_GRD')
+   .filterBounds(aoi)
+   .filterDate('2024-01-01','2024-12-31')
+   .filter(ee.Filter.eq('instrumentMode','IW'))
+   .filter(ee.Filter.listContains('transmitterReceiverPolarisation','VV'))
+   .filter(ee.Filter.eq('orbitProperties_pass','ASCENDING'))
+   .select('VV');
+      
+
+var s1_median =s2.median().clip(aoi);
+var s2_median= s2.median().clip(aoi);
+
+//print('Number of sentinel-1 images',s1.size());
+//print('Number of sentinel-1 images',s2.size());
+//Map.addLayer(s1_median,{min:-25,max:0},'Sentinel-2018')
+//Map.addLayer(s2_median,{min:-25,max:0},'Sentinel-2024')
+var water2018 = getS1Water(2017);
+var water2024 = getS1Water(2024);
+
+var w18 = water2018.unmask(0);
+var w24 = water2024.unmask(0);
+
+// Transition encoding
+//  0 = non-water both years
+//  1 = water loss (2018 → land 2024)
+//  2 = water gain (land 2018 → water 2024)
+//  3 = persistent water
+
+var transition = w24.multiply(2).add(w18);
+// Mask land so it stays transparent
+var exportImage = transition.selfMask();
+var vis = {
+  min: 1,
+  max: 3,
+  palette: [
+    'ff0000', // water loss
+    '00ff00', // water gain
+    '0000ff'  // persistent water
+  ]
+};
+var transitionClean = transition
+  .focal_mode({radius: 1, units: 'pixels'})
+  .selfMask();
+
+Map.addLayer(
+  transitionClean,
+  {
+    min: 1,
+    max: 3,
+    palette: ['ff0000', '00ff00', '0000ff']
+  },
+  'Water movement 2018–2024 (cleaned)'
+);
+
+//Map.addLayer(
+//  transition.selfMask(),
+//  {
+  //  min: 1,
+    //max: 3,
+    //palette: [
+      
+    //  'ff0000', // 1 loss
+    //  '00ff00', // 2 gain
+    //  '0000ff'  // 3 persistent water
+  //  ]
+  //},
+  //'Water movement 2018–2024'
+//);
+
+var areaImage = ee.Image.pixelArea().rename('area');
+var classImage = transition.rename('class');
+
+var areaByClassImage = areaImage.addBands(classImage);
+
+var areaByClass = areaByClassImage.reduceRegion({
+  reducer: ee.Reducer.sum().group({
+    groupField: 1,     // index of 'class' band
+    groupName: 'class'
+  }),
+  geometry: aoi,
+  scale: 10,
+  maxPixels: 1e13
+});
+Export.image.toDrive({
+  image: exportImage.visualize(vis),
+  description: 'Lake_Naivasha_Water_Change_2018_2024',
+  folder: 'GEE_exports',
+  fileNamePrefix: 'naivasha_water_change_2018_2024',
+  region: aoi,
+  scale: 10,
+  maxPixels: 1e13
+});
+
+
+print('Area by transition class (m²)', areaByClass);
+
+print('Area by transition class (m²)', areaByClass);
+
+
+
+//egend
+// -------------------------------
+// LEGEND PANEL
+// -------------------------------
+var legend = ui.Panel({
+  style: {
+    position: 'bottom-left',
+    padding: '8px 15px'
+  }
+});
+
+// Legend title
+var legendTitle = ui.Label({
+  value: 'Water Change (2018–2024)',
+  style: {
+    fontWeight: 'bold',
+    fontSize: '14px',
+    margin: '0 0 6px 0'
+  }
+});
+legend.add(legendTitle);
+
+// Function to create legend rows
+function makeLegendRow(color, name) {
+  var colorBox = ui.Label({
+    style: {
+      backgroundColor: color,
+      padding: '8px',
+      margin: '0 0 4px 0'
+    }
+  });
+
+  var description = ui.Label({
+    value: name,
+    style: { margin: '0 0 4px 6px' }
+  });
+
+  return ui.Panel({
+    widgets: [colorBox, description],
+    layout: ui.Panel.Layout.Flow('horizontal')
+  });
+}
+
+// Add legend items
+legend.add(makeLegendRow('ffffff', 'Land (no water)'));
+legend.add(makeLegendRow('ff0000', 'Water loss'));
+legend.add(makeLegendRow('00ff00', 'Water gain'));
+legend.add(makeLegendRow('0000ff', 'Persistent water'));
+
+// Add legend to map
+Map.add(legend);
+
+//Export.image.toDrive({
+  //image: exportImage.visualize(vis),
+  //description: 'Lake_Naivasha_Water_Change_2018_2024',
+  //folder: 'GEE_exports',
+  //fileNamePrefix: 'naivasha_water_change_2018_2024',
+  //region: aoi,
+  //scale: 10,
+  //maxPixels: 1e13
+//});
+//histogram
+
+var histogram = ui.Chart.image.histogram({
+  image: s1_median,
+  region: aoi,
+  scale: 10,
+  maxBuckets: 100,
+   maxPixels: 2e7
+})
+.setOptions({
+  title: 'Sentinel-1 VV Backscatter Histogram – Lake Naivasha',
+  hAxis: {
+    title: 'Backscatter (dB)'
+  },
+  vAxis: {
+    title: 'Pixel count'
+  },
+  series: {
+    0: {color: 'black'}
+  }
+});
+
+print(histogram);
+
+   
