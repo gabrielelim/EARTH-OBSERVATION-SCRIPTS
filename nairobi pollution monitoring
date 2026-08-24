@@ -1,0 +1,65 @@
+// --------------------------------------------------
+// 1. Load Sentinel-5P NO2 (VALID DATA)
+// --------------------------------------------------
+var collection = ee.ImageCollection('COPERNICUS/S5P/NRTI/L3_NO2')
+  .select('NO2_column_number_density')
+  .filterDate('2026-01-01', '2026-01-11')   
+  // ✅ correct QA filter
+
+
+// --------------------------------------------------
+// 2. Administrative boundaries
+// --------------------------------------------------
+var counties = ee.FeatureCollection('FAO/GAUL/2015/level2')
+  .filter(ee.Filter.eq('ADM0_NAME', 'Kenya'));
+
+var Nairobi = counties.filter(ee.Filter.eq('ADM2_NAME', 'Nairobi'));
+var Nakuru  = counties.filter(ee.Filter.eq('ADM2_NAME', 'Nakuru'));
+
+var studyArea = Nairobi.merge(Nakuru);
+
+
+// --------------------------------------------------
+// 3. Mean NO2 Image
+// --------------------------------------------------
+var no2_mean = collection.median()
+  .clip(studyArea);
+
+
+// --------------------------------------------------
+// 4. Visualization
+// --------------------------------------------------
+var band_viz = {
+  min: 0,
+  max: 0.0002,
+  palette: ['black', 'blue', 'purple', 'cyan', 'green', 'yellow', 'red']
+
+};
+
+
+// --------------------------------------------------
+// 5. Map Display
+// --------------------------------------------------
+Map.centerObject(studyArea, 8);
+
+Map.addLayer(no2_mean, band_viz, 'Mean NO₂');
+Map.addLayer(Nairobi.style({
+  color: 'red', fillColor: '00000000', width: 2
+}), {}, 'Nairobi');
+
+Map.addLayer(Nakuru.style({
+  color: 'blue', fillColor: '00000000', width: 2
+}), {}, 'Nakuru');
+
+
+Export.image.toDrive(
+  {
+    image: no2_image,
+    description:'pollution',
+    folder:'EarthEngine',
+    fileNamePrefix:'nairobi_pollution',
+    region: nairobi_area,
+    scale:500,
+   maxPixels:1e10
+    
+ });
