@@ -1,0 +1,39 @@
+var country = ee.FeatureCollection('FAO/GAUL_SIMPLIFIED_500m/2015/level2');
+
+// Get only interstates.
+var country = country.filter(ee.Filter.eq('ADM0_NAME', 'Kenya'));
+var county= country.filter(ee.Filter.eq('ADM2_NAME','Marakwet'));
+
+
+var LON = 35.644392
+var LAT = 1.128361
+var point = ee.Geometry.Point(LON,LAT)
+
+// Display layers in different colors.
+Map.addLayer(country, {color: 'gray'}, 'country');
+Map.addLayer(county, {color: ''}, 'county');
+Map.addLayer(point,{color: 'black'},'chesongoch_village')
+Map.setCenter(LON,LAT,10)
+
+var GIS_Copernicus= ee.ImageCollection('COPERNICUS/S1_GRD')
+   .filterBounds(county)
+   
+   .filter(ee.Filter.eq('instrumentMode','IW'))
+   .filter(ee.Filter.listContains('transmitterReceiverPolarisation','VV'))
+   .select('VV')
+   .filter(ee.Filter.eq('orbitProperties_pass', 'ASCENDING'));
+
+//using median
+var before_collection = GIS_Copernicus.filterDate('2025-08-01', '2025-09-01');
+var before_image = before_collection.median()
+
+var  after_collection= GIS_Copernicus.filterDate('2025-09-01','2025-10-04')
+var after_image= after_collection.median()
+
+
+
+//backscattered
+var backscatter= after_image.subtract(before_image);
+//histogram
+print(ui.Chart.image.histogram(backscatter,county,30)
+    .setOptions({title:'Landslide change',hAxis:'Backscattered Change',vAxis:'pixel Count'}))
