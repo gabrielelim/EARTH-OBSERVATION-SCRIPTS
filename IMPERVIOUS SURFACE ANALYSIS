@@ -1,0 +1,41 @@
+var nairobi = ee.FeatureCollection("FAO/GAUL/2015/level2")
+  .filter(ee.Filter.eq('ADM2_NAME', 'Nairobi'));
+
+Map.centerObject(nairobi, 11);
+var image_1975 = ee.Image('JRC/GHSL/P2023A/GHS_BUILT_S/1975');
+var built_1975 = image_1975.select('built_surface').clip(nairobi);
+
+var image_2020 = ee.Image('JRC/GHSL/P2023A/GHS_BUILT_S/2020');
+var built_2020 = image_2020.select('built_surface').clip(nairobi);
+
+var visParams = {
+  min: 0,
+  max: 8000,
+  palette: ['000000', 'FFFFFF']
+};
+var nairobi = ee.FeatureCollection("FAO/GAUL/2015/level2")
+  .filter(ee.Filter.eq('ADM2_NAME', 'Nairobi'));
+
+var image_1975 = ee.Image('JRC/GHSL/P2023A/GHS_BUILT_S/1975');
+var built_1975 = image_1975.select('built_surface').clip(nairobi);
+
+var image_2020 = ee.Image('JRC/GHSL/P2023A/GHS_BUILT_S/2020');
+var built_2020 = image_2020.select('built_surface').clip(nairobi);
+
+var image_2025 = ee.Image('JRC/GHSL/P2023A/GHS_BUILT_S/2025');
+var built_2025 = image_2025.select('built_surface').clip(nairobi);
+
+var change_2020 = built_2020.subtract(built_1975);
+var change_2025 = built_2020.subtract(built_1975);
+var changeParams = {
+  min: 0,
+  max: 4000,
+  palette: ['yellow', 'orange', 'red']
+};
+
+Map.centerObject(nairobi, 11);
+Map.addLayer(built_1975, visParams, 'Built-up 1975');
+Map.addLayer(change_2020, changeParams, 'Built-up 2020');
+Map.addLayer(change_2025, changeParams, 'Built-up 2025');
+
+Map.addLayer(nairobi, {}, 'Boundary');
