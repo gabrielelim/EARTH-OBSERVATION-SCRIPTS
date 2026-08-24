@@ -1,0 +1,62 @@
+var country = ee.FeatureCollection('FAO/GAUL_SIMPLIFIED_500m/2015/level2');
+
+var kenya = country.filter(ee.Filter.eq('ADM0_NAME', 'Kenya'));
+var counties = kenya.filter(
+  ee.Filter.inList('ADM2_NAME', ['Migori', 'Homa Bay'])
+);
+var before = ee.ImageCollection('COPERNICUS/S1_GRD')
+  .filterBounds(counties)
+  .filterDate('2026-02-15', '2026-03-01')
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .select('VV');
+
+var after = ee.ImageCollection('COPERNICUS/S1_GRD')
+  .filterBounds(counties)
+  .filterDate('2026-03-02', '2026-03-10')
+  .filter(ee.Filter.eq('instrumentMode', 'IW'))
+  .select('VV');
+
+
+var before_img = before.median().clip(counties);
+var after_img = after.median().clip(counties);
+
+var diff = before_img.subtract(after_img);
+
+var flood = diff.gt(1.5);  // adjust threshold if needed
+
+flood = flood.updateMask(flood)
+             .focal_min(1)
+             .focal_max(1);
+             
+             
+Map.centerObject(counties, 8);
+
+Map.addLayer(before_img, {min: -25, max: 0}, 'Before Flood');
+Map.addLayer(after_img, {min: -25, max: 0}, 'After Flood');
+Map.addLayer(flood, {palette: ['blue']}, 'Flooded Areas');
+Map.addLayer(counties, {}, 'Counties');
+// ====================================================
+// STEP 6: EXPORT THE FLOOD MAP TO GOOGLE DRIVE
+// ====================================================
+// ====================================================
+// UPDATED STEP 6: EXPORT AS A COLORED, TRANSPARENT LAYER
+// ====================================================
+
+// 1. Convert the binary flood layer into a styled RGB image (Solid Blue)
+// This automatically turns the background into a transparent Alpha channel
+var floodRGB = flood.visualize({
+  palette: ['0000FF'], // Hex code for solid blue
+  min: 1,
+  max: 1
+});
+
+// 2. Export the styled RGB image instead of the raw math layer
+Export.image.toDrive({
+  image: floodRGB,                     // Exporting the styled blue version
+  description: 'Kenya_Flood_March_2026_Visual',
+  folder: 'GEE_Exports',
+  fileNamePrefix: 'Migori_HomaBay_Inundation_2026_Blue',
+  scale: 30,                           // Resolution (30m)
+  region: counties,                    // Clip to county borders
+  maxPixels: 1e13
+});
