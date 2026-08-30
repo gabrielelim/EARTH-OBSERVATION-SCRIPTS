@@ -1,0 +1,139 @@
+/**
+ * LAKE VICTORIA WATER EXTENT & CHANGE ANALYSIS (2020-2024)
+ * Features:
+ * - Landsat 8/9 Collection 2 Level 2 processing
+ * - Cloud & Shadow Masking
+ * - Water Hyacinth removal (NDVI filter)
+ * - Surface Area calculation (km²)
+ * - Interactive UI (Legend & Stats)
+ */
+
+// 1. Define Area of Interest (Lake Victoria)
+var roi = ee.Geometry.Polygon([
+  [[31.37, 0.65], [34.95, 0.65], [34.95, -3.05], [31.37, -3.05]]
+]);
+Map.centerObject(roi, 8);
+
+// 2. Define Time Periods
+var p1_start = '2020-01-01';
+var p1_end = '2021-01-01'; // Exclusive of end date
+var p2_start = '2024-01-01';
+var p2_end = '2025-01-01';
+
+// 3. Pre-processing Function
+function prepareWaterMask(startDate, endDate) {
+  // Load Landsat 8 & 9 (harmonized collection)
+  var l8 = ee.ImageCollection("LANDSAT/LC08/C02/T1_L2");
+  var l9 = ee.ImageCollection("LANDSAT/LC09/C02/T1_L2");
+  
+  var collection = l8.merge(l9)
+    .filterBounds(roi)
+    .filterDate(startDate, endDate)
+    .filter(ee.Filter.lt('CLOUD_COVER', 30));
+
+  // Function to mask clouds and scale factors
+  var processed = collection.map(function(image) {
+    // Bitmask for clouds/shadows
+    var qa = image.select('QA_PIXEL');
+    var mask = qa.bitwiseAnd(1 << 3).eq(0)
+      .and(qa.bitwiseAnd(1 << 4).eq(0));
+    
+    // Scaling factors for Level 2
+    var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+    return opticalBands.updateMask(mask);
+  }).median().clip(roi);
+
+  // Calculate MNDWI (Water Index)
+  // (Green - SWIR1) / (Green + SWIR1) -> (B3 - B6)
+  var mndwi = processed.normalizedDifference(['SR_B3', 'SR_B6']).rename('mndwi');
+  
+  // Calculate NDVI (Vegetation Index to detect Hyacinth)
+  // (NIR - Red) / (NIR + Red) -> (B5 - B4)
+  var ndvi = processed.normalizedDifference(['SR_B5', 'SR_B4']).rename('ndvi');
+
+  /** 
+   * LOGIC: 
+   * A pixel is water if MNDWI > 0 
+   * BUT it must also have NDVI < 0.1 to exclude floating vegetation/hyacinth.
+   */
+  var water = mndwi.gt(0).and(ndvi.lt(0.1)).rename('water');
+  
+  return water.selfMask(); // selfMask hides the 'land' pixels (0)
+}
+
+// 4. Generate Masks for both periods
+var water2020 = prepareWaterMask(p1_start, p1_end);
+var water2024 = prepareWaterMask(p2_start, p2_end);
+
+// 5. Change Detection Logic
+// 1 = Permanent Water, 2 = New Water (Gain), 3 = Lost Water (Recession)
+var change = ee.Image(0)
+  .where(water2020.eq(1).and(water2024.eq(1)), 1)
+  .where(water2020.unmask().eq(0).and(water2024.eq(1)), 2)
+  .where(water2020.eq(1).and(water2024.unmask().eq(0)), 3)
+  .selfMask();
+
+// 6. Visualizations & Layers
+var changeVis = {
+  min: 1, max: 3, 
+  palette: ['#0d47a1', '#00e676', '#ff1744'] // Dark Blue, Green, Red
+};
+
+Map.addLayer(change, changeVis, 'Water Change (2020 to 2024)');
+
+// 7. Area Calculation (km²)
+var areaP1 = water2020.multiply(ee.Image.pixelArea()).divide(1e6).reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: roi,
+  scale: 30,
+  maxPixels: 1e13
+});
+
+var areaP2 = water2024.multiply(ee.Image.pixelArea()).divide(1e6).reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: roi,
+  scale: 30,
+  maxPixels: 1e13
+});
+
+// 8. Create User Interface (Title & Legend)
+var panel = ui.Panel({
+  style: {position: 'bottom-right', padding: '8px 15px', width: '250px'}
+});
+
+var title = ui.Label('Lake Victoria Analysis', {fontWeight: 'bold', fontSize: '18px'});
+var subTitle = ui.Label('2020 vs 2024 (Excl. Hyacinth)', {fontSize: '12px', color: 'gray'});
+
+var makeRow = function(color, name) {
+  var colorBox = ui.Label({style: {backgroundColor: color, padding: '8px', margin: '0 8px 4px 0'}});
+  var description = ui.Label({value: name, style: {margin: '2px 0 4px 0'}});
+  return ui.Panel({widgets: [colorBox, description], layout: ui.Panel.Layout.Flow('horizontal')});
+};
+
+panel.add(title).add(subTitle);
+panel.add(makeRow('#0d47a1', 'Permanent Water'));
+panel.add(makeRow('#00e676', 'Water Gain'));
+panel.add(makeRow('#ff1744', 'Water Loss'));
+
+var statsLabel = ui.Label('Calculating Area...', {fontSize: '13px', margin: '10px 0 0 0'});
+panel.add(statsLabel);
+Map.add(panel);
+
+// 9. Display Calculation Results
+ee.List([areaP1.get('water'), areaP2.get('water')]).evaluate(function(results) {
+  var val2020 = results[0];
+  var val2024 = results[1];
+  var diff = val2024 - val2020;
+  
+  statsLabel.setValue(
+    '2020 Area: ' + val2020.toFixed(2) + ' km²\n' +
+    '2024 Area: ' + val2024.toFixed(2) + ' km²\n' +
+    'Change: ' + (diff > 0 ? '+' : '') + diff.toFixed(2) + ' km²'
+  );
+  statsLabel.style().set({whiteSpace: 'pre'});
+});
+
+// 10. Map Title Layer
+Map.add(ui.Label('Lake Victoria Change Map', {
+  position: 'top-center', fontWeight: 'bold', fontSize: '20px', backgroundColor: 'rgba(255,255,255,0.7)'
+}));
